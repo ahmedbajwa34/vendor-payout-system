@@ -1,8 +1,8 @@
 
 
 import { Request, Response } from "express";
-import { createInvoiceSchema } from "../validator/invoice.validator.js";
-import { createInvoiceService } from "../services/invoice.service.js";
+import { createInvoiceSchema, rejectInvoiceSchema } from "../validator/invoice.validator.js";
+import { createInvoiceService, getInvoicesService, getInvoiceByIdService, submitInvoiceService, reviewInvoiceService, approveInvoiceService, rejectInvoiceService } from "../services/invoice.service.js";
 
 export const createInvoice = async (
     req: Request,
@@ -18,6 +18,124 @@ export const createInvoice = async (
     );
 
     res.status(201).json({
+        success: true,
+        data: invoice
+    });
+};
+
+export const getInvoices = async (
+    req: Request,
+    res: Response
+) => {
+    const user = req.user!;
+
+    const invoices = await getInvoicesService(
+        user.role,
+        user.vendorId
+    );
+
+    res.status(200).json({
+        success: true,
+        data: invoices
+    });
+};
+
+
+
+export const getInvoiceById = async (
+    req: Request,
+    res: Response
+) => {
+    const invoiceId = Number(req.params.id);
+    const user = req.user!;
+
+    const invoice = await getInvoiceByIdService(
+        invoiceId,
+        user.role,
+        user.vendorId
+    );
+
+    res.status(200).json({
+        success: true,
+        data: invoice
+    });
+};
+
+
+export const submitInvoice = async (
+    req: Request,
+    res: Response
+) => {
+    const invoiceId = Number(req.params.id);
+    const vendorId = req.user!.vendorId!;
+    const changedBy = req.user!.userId;
+
+    const invoice = await submitInvoiceService(
+        invoiceId,
+        vendorId,
+        changedBy
+    );
+
+    res.status(200).json({
+        success: true,
+        data: invoice
+    });
+};
+
+
+export const reviewInvoice = async (
+    req: Request,
+    res: Response
+) => {
+    const invoiceId = Number(req.params.id);
+
+    const changedBy = req.user!.userId;
+
+    const invoice = await reviewInvoiceService(
+    invoiceId,
+    changedBy
+    );
+    res.status(200).json({
+        success: true,
+        data: invoice
+    });
+};
+
+
+export const approveInvoice = async (
+    req: Request,
+    res: Response
+) => {
+    const invoiceId = Number(req.params.id);
+
+  const changedBy = req.user!.userId;
+
+  const invoice = await approveInvoiceService(
+    invoiceId,
+    changedBy
+);
+    res.status(200).json({
+        success: true,
+        data: invoice
+    });
+};
+
+export const rejectInvoice = async (
+    req: Request,
+    res: Response
+) => {
+    const data = rejectInvoiceSchema.parse(req.body);
+
+    const invoiceId = Number(req.params.id);
+    const changedBy = req.user!.userId;
+
+    const invoice = await rejectInvoiceService(
+        invoiceId,
+        changedBy,
+        data.reason
+    );
+
+    res.status(200).json({
         success: true,
         data: invoice
     });

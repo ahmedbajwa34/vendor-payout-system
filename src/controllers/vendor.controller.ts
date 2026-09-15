@@ -6,8 +6,6 @@ import { updateVendorSchema } from "../validator/vendor.validator.js";
 
 
 
-
-
 export const approveVendor = async (
     req: Request,
     res: Response

@@ -19,3 +19,9 @@ export const createInvoiceSchema = z.object({
         })
     ).min(1)
 });
+
+
+
+export const rejectInvoiceSchema = z.object({
+    reason: z.string().min(1).max(255)
+});
