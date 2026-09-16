@@ -1,6 +1,13 @@
 
+export enum UserRole {
+    ADMIN = "ADMIN",
+    FINANCE = "FINANCE",
+    VENDOR = "VENDOR"
+}
+
 export interface AuthUser {
     userId: number;
-    role: "ADMIN" | "FINANCE" | "VENDOR";
+    role: UserRole;
     vendorId: number | null;
 }
+

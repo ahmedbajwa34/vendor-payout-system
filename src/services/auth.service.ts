@@ -109,7 +109,6 @@ export const loginUser = async(
         throw new Error("Invalid email or password");
     }
 
-    console.log("SIGN SECRET:", process.env.JWT_SECRET);
       const token = jwt.sign(
     {
         userId: user.id,

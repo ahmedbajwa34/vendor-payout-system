@@ -11,3 +11,17 @@ export const updateVendorSchema = z.object({
         message: "At least one field must be provided"
     }
 );
+
+export const createTaxProfileSchema = z.object({
+    taxId: z.string().min(1).max(50),
+    taxForm: z.string().min(1).max(20),
+    validFrom: z.string(),
+    validUntil: z.string().nullable().optional()
+});
+
+export const updateTaxProfileSchema = z.object({
+    taxId: z.string().min(1).max(50).optional(),
+    taxForm: z.string().min(1).max(20).optional(),
+    validFrom: z.string().optional(),
+    validUntil: z.string().nullable().optional()
+});

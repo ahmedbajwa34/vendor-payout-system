@@ -1,14 +1,13 @@
 
 import "dotenv/config";
 import express from "express";
-import { success } from "zod";
 import pool from "./db/pool.js";
 import authRoutes from "./routes/auth.routes.js"
 import { errorHandler } from "./middlewear/error.middlewear.js";
 import vendorRoutes from "./routes/vendor.routes.js"
 import invoiceRoutes from "./routes/invoice.routes.js";
-
-
+import payoutRoutes from "./routes/payout.routes.js";
+import reportRoutes from "./routes/report.routes.js";
 
 
 const app = express();
@@ -35,6 +34,9 @@ app.use("/api/vendors", vendorRoutes);
 
 app.use("/api/invoices", invoiceRoutes);
 
+app.use("/api/payouts", payoutRoutes);
+
+app.use("/reports", reportRoutes);
 
 app.use(errorHandler);
 

@@ -3,6 +3,11 @@
 import pool from "../db/pool.js";
 import { PoolClient } from "pg";
 import { AppError } from "../types/app-error.js";
+import { withTransaction } from "../db/transaction.js";
+import { UserRole } from "../types/auth.types.js";
+
+
+
 
 interface CreateInvoiceData {
     invoiceNumber: string;
@@ -20,27 +25,21 @@ export const createInvoiceService = async (
     vendorId: number,
     data: CreateInvoiceData
 ) => {
-    // 1. Calculate items total
     const itemsTotal = data.items.reduce(
         (sum, item) =>
             sum + item.quantity * item.unitPrice,
         0
     );
 
-    // 2. Make sure invoice total matches items
     if (itemsTotal !== data.totalAmount) {
         throw new Error(
             "Invoice total does not match the sum of invoice items"
         );
     }
 
-    const client = await pool.connect();
+    return withTransaction(async (client) => {
 
-    try {
-        // 3. Start transaction
-        await client.query("BEGIN");
-
-        // 4. Create invoice
+        // Create invoice
         const invoiceResult = await client.query(
             `
             INSERT INTO invoices
@@ -74,53 +73,53 @@ export const createInvoiceService = async (
 
         const invoice = invoiceResult.rows[0];
 
-        // 5. Create invoice items
-        for (const item of data.items) {
-            await client.query(
-                `
-                INSERT INTO invoice_items
-                    (
-                        invoice_id,
-                        description,
-                        quantity,
-                        unit_price
-                    )
-                VALUES
-                    ($1, $2, $3, $4)
-                `,
-                [
-                    invoice.id,
-                    item.description,
-                    item.quantity,
-                    item.unitPrice
-                ]
-            );
-        }
+        // Create invoice items
+        const values: unknown[] = [];
+        const placeholders: string[] = [];
 
-        // 6. Commit everything
-        await client.query("COMMIT");
+        data.items.forEach((item, index) => {
+            const offset = index * 4;
+
+            placeholders.push(
+                `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4})`
+            );
+
+            values.push(
+                invoice.id,
+                item.description,
+                item.quantity,
+                item.unitPrice
+            );
+        });
+
+        await client.query(
+            `
+            INSERT INTO invoice_items
+                (
+                    invoice_id,
+                    description,
+                    quantity,
+                    unit_price
+                )
+            VALUES ${placeholders.join(", ")}
+            `,
+            values
+        );
 
         return invoice;
-
-    } catch (error) {
-
-        // 7. Undo everything if something fails
-        await client.query("ROLLBACK");
-
-        throw error;
-
-    } finally {
-
-        // 8. Return connection to pool
-        client.release();
-    }
+    });
 };
 
 
 export const getInvoicesService = async (
-    role: "ADMIN" | "FINANCE" | "VENDOR",
-    vendorId: number | null
+    role: UserRole,
+    vendorId: number | null,
+    page: number,
+    limit: number,
+    status?: string
 ) => {
+    const offset = (page - 1) * limit;
+
     let query = `
         SELECT
             i.id,
@@ -138,32 +137,70 @@ export const getInvoicesService = async (
             ON i.vendor_id = v.id
     `;
 
-    const values: number[] = [];
+    const values: (number | string)[] = [];
+    const conditions: string[] = [];
 
-    if (role === "VENDOR") {
-        query += `
-            WHERE i.vendor_id = $1
-        `;
-
+    if (role === UserRole.VENDOR) {
+        conditions.push(`i.vendor_id = $${values.length + 1}`);
         values.push(vendorId!);
     }
 
-    query += `
-        ORDER BY i.created_at DESC
+    if (status) {
+        conditions.push(`i.status = $${values.length + 1}`);
+        values.push(status);
+    }
+
+    if (conditions.length > 0) {
+        query += ` WHERE ${conditions.join(" AND ")}`;
+    }
+
+    // Count matching invoices
+    const countValues = [...values];
+
+    const countQuery = `
+        SELECT COUNT(*) AS total
+        FROM invoices i
+        ${conditions.length > 0
+            ? `WHERE ${conditions.join(" AND ")}`
+            : ""}
     `;
 
-    const result = await pool.query(query, values);
+     query += `
+     ORDER BY i.created_at DESC
+     LIMIT $${values.length + 1}
+     OFFSET $${values.length + 2}
+`;
 
-    return result.rows;
+    values.push(limit, offset);
+
+    const [countResult, result] = await Promise.all([
+    pool.query(countQuery, countValues),
+    pool.query(query, values)
+]);
+
+const total = Number(countResult.rows[0].total);
+
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+        invoices: result.rows,
+        pagination: {
+            page,
+            limit,
+            total,
+            totalPages
+        }
+    };
 };
+
 
 
 export const getInvoiceByIdService = async (
     invoiceId: number,
-    role: "ADMIN" | "FINANCE" | "VENDOR",
+    role: UserRole,
     vendorId: number | null
 ) => {
-    let query = `
+    let invoiceQuery = `
         SELECT
             i.id,
             i.vendor_id,
@@ -176,39 +213,41 @@ export const getInvoiceByIdService = async (
             i.created_at,
             i.updated_at
         FROM invoices i
-        JOIN vendors v ON i.vendor_id = v.id
+        INNER JOIN vendors v ON i.vendor_id = v.id
         WHERE i.id = $1
     `;
 
-    const values: number[] = [invoiceId];
+    const invoiceValues: number[] = [invoiceId];
 
-    if (role === "VENDOR") {
-        query += ` AND i.vendor_id = $2`;
-        values.push(vendorId!);
+    if (role === UserRole.VENDOR) {
+        invoiceQuery += ` AND i.vendor_id = $2`;
+        invoiceValues.push(vendorId!);
     }
 
-    const invoiceResult = await pool.query(query, values);
+    const [invoiceResult, itemsResult] = await Promise.all([
+        pool.query(invoiceQuery, invoiceValues),
+
+        pool.query(
+            `
+            SELECT
+                id,
+                description,
+                quantity,
+                unit_price,
+                created_at
+            FROM invoice_items
+            WHERE invoice_id = $1
+            ORDER BY id
+            `,
+            [invoiceId]
+        )
+    ]);
 
     if (invoiceResult.rows.length === 0) {
         throw new Error("Invoice not found");
     }
 
     const invoice = invoiceResult.rows[0];
-
-    const itemsResult = await pool.query(
-        `
-        SELECT
-            id,
-            description,
-            quantity,
-            unit_price,
-            created_at
-        FROM invoice_items
-        WHERE invoice_id = $1
-        ORDER BY id
-        `,
-        [invoiceId]
-    );
 
     return {
         ...invoice,
@@ -217,16 +256,12 @@ export const getInvoiceByIdService = async (
 };
 
 
-
 export const submitInvoiceService = async (
     invoiceId: number,
     vendorId: number,
     changedBy: number
 ) => {
-    const client = await pool.connect();
-
-    try {
-        await client.query("BEGIN");
+    return withTransaction(async (client) => {
 
         const result = await client.query(
             `
@@ -266,16 +301,8 @@ export const submitInvoiceService = async (
             "SUBMITTED"
         );
 
-        await client.query("COMMIT");
-
         return invoice;
-
-    } catch (error) {
-        await client.query("ROLLBACK");
-        throw error;
-    } finally {
-        client.release();
-    }
+    });
 };
 
 
@@ -284,10 +311,7 @@ export const reviewInvoiceService = async (
     invoiceId: number,
     changedBy: number
 ) => {
-    const client = await pool.connect();
-
-    try {
-        await client.query("BEGIN");
+    return withTransaction(async (client) => {
 
         const result = await client.query(
             `
@@ -324,16 +348,8 @@ export const reviewInvoiceService = async (
             "UNDER_REVIEW"
         );
 
-        await client.query("COMMIT");
-
         return invoice;
-
-    } catch (error) {
-        await client.query("ROLLBACK");
-        throw error;
-    } finally {
-        client.release();
-    }
+    });
 };
 
 
@@ -341,10 +357,7 @@ export const approveInvoiceService = async (
     invoiceId: number,
     changedBy: number
 ) => {
-    const client = await pool.connect();
-
-    try {
-        await client.query("BEGIN");
+    return withTransaction(async (client) => {
 
         // 1. Get invoice + vendor status
         const invoiceResult = await client.query(
@@ -365,31 +378,31 @@ export const approveInvoiceService = async (
         );
 
         if (invoiceResult.rows.length === 0) {
-         throw new AppError(
-          "INVOICE_NOT_FOUND",
-          "Invoice not found",
-          404
-);
+            throw new AppError(
+                "INVOICE_NOT_FOUND",
+                "Invoice not found",
+                404
+            );
         }
 
         const invoice = invoiceResult.rows[0];
 
         // 2. Invoice must be under review
         if (invoice.status !== "UNDER_REVIEW") {
-        throw new AppError(
-          "INVALID_INVOICE_STATUS",
-          "Only invoices under review can be approved",
-          400
-);
+            throw new AppError(
+                "INVALID_INVOICE_STATUS",
+                "Only invoices under review can be approved",
+                400
+            );
         }
 
         // 3. Vendor must still be active
         if (invoice.vendor_status !== "ACTIVE") {
             throw new AppError(
-             "VENDOR_NOT_ACTIVE",
-             "Invoice cannot be approved because vendor is not active",
-             403
-);
+                "VENDOR_NOT_ACTIVE",
+                "Invoice cannot be approved because vendor is not active",
+                403
+            );
         }
 
         // 4. Check invoice items
@@ -411,18 +424,18 @@ export const approveInvoiceService = async (
 
         if (itemsTotal === 0) {
             throw new AppError(
-             "INVALID_INVOICE_ITEMS",
-             "Invoice must contain at least one item",
-              400
-);
+                "INVALID_INVOICE_ITEMS",
+                "Invoice must contain at least one item",
+                400
+            );
         }
 
         if (itemsTotal !== invoiceTotal) {
             throw new AppError(
-               "INVALID_INVOICE_TOTAL",
-               "Invoice total does not match invoice items",
+                "INVALID_INVOICE_TOTAL",
+                "Invoice total does not match invoice items",
                 400
-);
+            );
         }
 
         // 5. Check valid tax profile
@@ -442,11 +455,11 @@ export const approveInvoiceService = async (
         );
 
         if (taxResult.rows.length === 0) {
-        throw new AppError(
-           "INVALID_TAX_PROFILE",
-           "Vendor does not have a valid tax profile",
-            400
-        );
+            throw new AppError(
+                "INVALID_TAX_PROFILE",
+                "Vendor does not have a valid tax profile",
+                400
+            );
         }
 
         // 6. Approve invoice
@@ -486,27 +499,17 @@ export const approveInvoiceService = async (
             "APPROVED"
         );
 
-        await client.query("COMMIT");
-
         return approvedInvoice;
-
-    } catch (error) {
-        await client.query("ROLLBACK");
-        throw error;
-    } finally {
-        client.release();
-    }
+    });
 };
+
 
 export const rejectInvoiceService = async (
     invoiceId: number,
     changedBy: number,
     reason: string
 ) => {
-    const client = await pool.connect();
-
-    try {
-        await client.query("BEGIN");
+    return withTransaction(async (client) => {
 
         const result = await client.query(
             `
@@ -535,38 +538,17 @@ export const rejectInvoiceService = async (
 
         const invoice = result.rows[0];
 
-        await client.query(
-            `
-            INSERT INTO invoice_status_history
-                (
-                    invoice_id,
-                    changed_by,
-                    old_status,
-                    new_status,
-                    reason
-                )
-            VALUES
-                ($1, $2, $3, $4, $5)
-            `,
-            [
-                invoiceId,
-                changedBy,
-                "UNDER_REVIEW",
-                "REJECTED",
-                reason
-            ]
+        await addInvoiceStatusHistory(
+            client,
+            invoiceId,
+            changedBy,
+            "UNDER_REVIEW",
+            "REJECTED",
+            reason
         );
 
-        await client.query("COMMIT");
-
         return invoice;
-
-    } catch (error) {
-        await client.query("ROLLBACK");
-        throw error;
-    } finally {
-        client.release();
-    }
+    });
 };
 
 

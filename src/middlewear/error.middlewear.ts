@@ -3,6 +3,11 @@
 
 import { Request, Response, NextFunction } from "express";
 import { AppError } from "../types/app-error.js";
+import { ZodError } from "zod";
+
+
+
+
 
 export const errorHandler = (
     error: unknown,
@@ -10,6 +15,17 @@ export const errorHandler = (
     res: Response,
     _next: NextFunction
 ) => {
+
+    if (error instanceof ZodError) {
+    return res.status(400).json({
+        success: false,
+        error: {
+            code: "VALIDATION_ERROR",
+            message: "Invalid request data",
+            details: error.issues
+        }
+    });
+}
 
     if (error instanceof AppError) {
         return res.status(error.statusCode).json({

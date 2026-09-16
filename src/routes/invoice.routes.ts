@@ -5,6 +5,7 @@ import { authenticate } from "../middlewear/auth.middlewear.js";
 import { authorize } from "../middlewear/authorize.middlewear.js";
 import { createInvoice, getInvoices, getInvoiceById, submitInvoice, reviewInvoice, approveInvoice, rejectInvoice } from "../controllers/invoice.controller.js";
 import { requireActiveVendor } from "../middlewear/vendor-status.middleware.js";
+import { all, staff, vendor } from "../types/role-group.js";
 
 const router = Router();
 
@@ -12,7 +13,7 @@ const router = Router();
 router.get(
     "/",
     authenticate,
-    authorize("ADMIN", "FINANCE", "VENDOR"),
+    authorize(...all),
     getInvoices
 );  
 
@@ -20,7 +21,7 @@ router.get(
 router.post(
     "/",
     authenticate,
-    authorize("VENDOR"),
+    authorize(...vendor),
     requireActiveVendor,
     createInvoice
 );
@@ -28,14 +29,14 @@ router.post(
 router.get(
     "/:id",
     authenticate,
-    authorize("ADMIN", "FINANCE", "VENDOR"),
+    authorize(...all),
     getInvoiceById
 );
 
 router.patch(
     "/:id/submit",
     authenticate,
-    authorize("VENDOR"),
+    authorize(...vendor),
     submitInvoice
 );
 
@@ -43,21 +44,21 @@ router.patch(
 router.patch(
     "/:id/review",
     authenticate,
-    authorize("ADMIN", "FINANCE"),
+    authorize(...staff),
     reviewInvoice
 );
 
 router.patch(
     "/:id/approve",
     authenticate,
-    authorize("ADMIN", "FINANCE"),
+    authorize(...staff),
     approveInvoice
 );
 
 router.patch(
     "/:id/reject",
     authenticate,
-    authorize("ADMIN", "FINANCE"),
+    authorize(...staff),
     rejectInvoice
 );
 

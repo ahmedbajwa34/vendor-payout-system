@@ -1,7 +1,7 @@
 
 
 import { Request, Response } from "express";
-import { createInvoiceSchema, rejectInvoiceSchema } from "../validator/invoice.validator.js";
+import { createInvoiceSchema, rejectInvoiceSchema, invoiceQuerySchema } from "../validator/invoice.validator.js";
 import { createInvoiceService, getInvoicesService, getInvoiceByIdService, submitInvoiceService, reviewInvoiceService, approveInvoiceService, rejectInvoiceService } from "../services/invoice.service.js";
 
 export const createInvoice = async (
@@ -27,20 +27,22 @@ export const getInvoices = async (
     req: Request,
     res: Response
 ) => {
-    const user = req.user!;
+
+    const query = invoiceQuerySchema.parse(req.query);
 
     const invoices = await getInvoicesService(
-        user.role,
-        user.vendorId
+        req.user!.role,
+        req.user!.vendorId,
+        query.page,
+        query.limit,
+        query.status
     );
 
-    res.status(200).json({
+    return res.status(200).json({
         success: true,
         data: invoices
     });
 };
-
-
 
 export const getInvoiceById = async (
     req: Request,
