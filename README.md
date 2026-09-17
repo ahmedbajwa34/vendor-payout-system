@@ -1,83 +1,313 @@
 # Vendor Payout & Tax Management System
 
-A backend API for managing vendors, invoices, tax profiles, invoice approvals, payouts, payment history, and financial reporting.
+A backend REST API for managing vendors, invoices, payouts, tax profiles, tax rules, and financial reporting.
 
-The project is built with **TypeScript, Express.js, and PostgreSQL**, with a focus on clean backend architecture, validation, authorization, transactions, SQL optimization, and maintainable business logic.
+The system models a real-world vendor payment workflow where vendors submit invoices, finance/admin users review and approve them, payouts are created and processed, and applicable withholding tax is calculated and recorded for audit purposes.
 
-## Tech Stack
+---
 
-* TypeScript
-* Node.js
-* Express.js
-* PostgreSQL
-* `pg`
-* Zod
-* JWT
-* bcrypt
-* dotenv
-* Postman
+## Features
 
-## Architecture
+### Authentication & Authorization
+
+* JWT-based authentication
+* Role-based access control
+* Three user roles:
+
+  * `ADMIN`
+  * `FINANCE`
+  * `VENDOR`
+* Protected API routes
+* Vendor ownership protection
+* Vendors can only access their own vendor-related data
+* Staff users can access staff-level operations
+
+### Vendor Management
+
+* Create vendors and vendor users
+* Vendor approval
+* Vendor suspension
+* Vendor information management
+* Vendor-specific access control
+* Vendor status validation before invoice creation
+
+### Tax Management
+
+* Vendor tax profiles
+* Tax profile validity periods
+* Historical tax profiles
+* Tax profile date validation
+* Prevention of overlapping tax profiles
+* Configurable withholding tax rules
+* Tax rule validity periods
+* Prevention of overlapping tax rules
+* Active/inactive tax rules
+* Historical tax snapshots for completed payouts
+
+### Invoice Management
+
+* Vendor invoice creation
+* Invoice item management
+* Transactional invoice creation
+* Invoice ownership protection
+* Invoice status workflow
+* Invoice status history
+* Invoice submission
+* Invoice review
+* Invoice approval
+* Invoice rejection with reason
+* Validation of invoice items against invoice total
+* Validation of vendor status
+* Validation of applicable tax profile
+* Pagination
+* Status filtering
+
+### Payout Management
+
+* Payout creation for approved invoices
+* Partial/multiple payouts
+* Remaining invoice balance validation
+* Protection against overpayment
+* Transaction-safe payout creation
+* Payout processing
+* Payout completion
+* Payout failure
+* Payout cancellation
+* Payout status history
+* Vendor payout ownership protection
+
+### Tax Withholding
+
+When a payout is completed, the system:
+
+1. Finds the vendor's applicable tax profile.
+2. Finds the active withholding tax rule.
+3. Calculates the withholding amount.
+4. Calculates the vendor's net amount.
+5. Stores the tax calculation as a historical record.
+6. Marks the payout as completed.
+
+Example:
+
+```text
+Gross Payout       = $1,000.00
+Tax Rate           = 10%
+Tax Withheld       = $100.00
+Net Amount         = $900.00
+```
+
+The tax record stores the rate and calculated amounts so historical payouts remain auditable even if the tax rule changes later.
+
+### Reporting
+
+The system provides:
+
+* Vendor payout summary
+* Invoice status summary
+* Tax withholding report
+
+Reports use SQL aggregation, CTEs, joins, and window functions where appropriate.
+
+### Error Handling
+
+* Centralized error handling
+* Custom `AppError`
+* Consistent API error responses
+* Zod validation errors
+* HTTP status codes
+* Database/business errors handled through the global error middleware
+
+---
+
+# Architecture
 
 The application follows a layered backend architecture:
 
 ```text
-Request
-   ↓
+Client
+  │
+  ▼
 Route
-   ↓
+  │
+  ▼
 Middleware
-   ↓
+  │
+  ├── Authentication
+  ├── Authorization
+  └── Request validation
+  │
+  ▼
 Controller
-   ↓
+  │
+  ▼
 Service
-   ↓
+  │
+  ├── Business logic
+  ├── Transactions
+  └── Database operations
+  │
+  ▼
 PostgreSQL
-   ↓
+  │
+  ▼
 Service
-   ↓
+  │
+  ▼
 Controller
-   ↓
-Response
+  │
+  ▼
+HTTP Response
 ```
 
-### Responsibilities
+### Responsibility of each layer
 
-**Routes**
+#### Routes
 
-* Define API endpoints.
-* Apply authentication and authorization middleware.
+Define:
 
-**Middleware**
+* HTTP method
+* Endpoint
+* Middleware
+* Controller
 
-* JWT authentication.
-* Role-based authorization.
-* Vendor ownership checks.
-* Vendor status checks.
-* Global error handling.
+Routes do not contain business logic.
 
-**Controllers**
+#### Middleware
 
-* Receive HTTP requests.
-* Validate request data.
-* Call services.
-* Return HTTP responses.
+Responsible for cross-cutting concerns such as:
 
-**Services**
+* Authentication
+* Authorization
+* Vendor ownership
+* Vendor status validation
+* Global error handling
 
-* Contain business logic.
-* Execute database operations.
-* Handle transactions and business rules.
+#### Controllers
 
-**PostgreSQL**
+Responsible for:
 
-* Stores application data.
-* Enforces relationships and constraints.
-* Handles transactional operations and reporting queries.
+* Receiving HTTP requests
+* Validating request data
+* Calling services
+* Returning HTTP responses
 
-## Database Design
+Controllers do not contain database queries or business rules.
 
-Main entities:
+#### Services
+
+Responsible for:
+
+* Business logic
+* Database operations
+* Transactions
+* State transitions
+* Validation involving database state
+* Financial calculations
+
+#### PostgreSQL
+
+Responsible for:
+
+* Data persistence
+* Relationships
+* Constraints
+* Foreign keys
+* Unique constraints
+* Checks
+* Query filtering
+* Aggregation
+* Locking
+
+---
+
+# Main Business Flow
+
+## Vendor → Invoice → Review → Payout
+
+```text
+Vendor
+   │
+   ▼
+Vendor Account
+   │
+   ▼
+Create Invoice
+   │
+   ▼
+DRAFT
+   │
+   ▼
+SUBMITTED
+   │
+   ▼
+UNDER_REVIEW
+   │
+   ├───────────────┐
+   │               │
+   ▼               ▼
+APPROVED         REJECTED
+   │
+   ▼
+Create Payout
+   │
+   ▼
+SCHEDULED
+   │
+   ▼
+PROCESSING
+   │
+   ├───────────────┐
+   │               │
+   ▼               ▼
+COMPLETED        FAILED
+```
+
+Scheduled payouts can also be cancelled before processing.
+
+---
+
+# Tax Flow
+
+```text
+Vendor
+   │
+   ▼
+Vendor Tax Profile
+   │
+   ▼
+Invoice
+   │
+   ▼
+Approved Invoice
+   │
+   ▼
+Payout
+   │
+   ▼
+Applicable Tax Rule
+   │
+   ▼
+Tax Calculation
+   │
+   ├── Gross Amount
+   ├── Tax Rate
+   ├── Tax Amount
+   └── Net Amount
+   │
+   ▼
+Payout Tax Record
+   │
+   ▼
+Payout Completed
+```
+
+The current project records the accounting/payment workflow but does not transfer real money through an external bank or payment provider.
+
+---
+
+# Database Design
+
+The system uses PostgreSQL with the following main entities:
 
 ```text
 users
@@ -88,178 +318,68 @@ invoice_items
 invoice_status_history
 payouts
 payout_status_history
+tax_rules
+payout_tax_records
 ```
 
-### Main relationships
+## Relationships
 
 ```text
 Vendor
- ├── Users
- ├── Tax Profiles
- └── Invoices
-       ├── Invoice Items
-       ├── Status History
-       └── Payouts
-             └── Status History
+  │
+  ├────────── Users
+  │
+  ├────────── Invoices
+  │              │
+  │              ├──── Invoice Items
+  │              │
+  │              └──── Invoice Status History
+  │
+  └────────── Tax Profiles
+
+Invoice
+  │
+  └────────── Payouts
+                 │
+                 ├──── Payout Status History
+                 │
+                 └──── Payout Tax Record
+                              │
+                              └──── Tax Rule
 ```
 
-## Authentication & Authorization
+---
 
-The API uses JWT-based authentication.
+# Important Database Rules
 
-JWT payload contains:
+The database contains constraints to protect data integrity.
 
-```text
-userId
-role
-vendorId
-```
+### User/vendor relationship
 
-Supported roles:
+Vendor users must have a `vendor_id`.
 
-```text
-ADMIN
-FINANCE
-VENDOR
-```
+Admin and Finance users must not have a `vendor_id`.
 
-### Access model
+### Invoice
 
-**ADMIN**
+* Invoice number is unique.
+* Invoice total must be positive.
+* Due date cannot be before invoice date.
+* Invoice must belong to an existing vendor.
 
-* Manage vendors and users.
-* Approve and suspend vendors.
-* Access system-wide data.
+### Invoice items
 
-**FINANCE**
+* Quantity must be greater than zero.
+* Unit price cannot be negative.
+* Items must belong to an existing invoice.
 
-* Review invoices.
-* Approve/reject invoices.
-* Manage payouts.
-* Access financial reports.
+### Payouts
 
-**VENDOR**
+* Payout amount must be positive.
+* Payout must belong to an existing invoice.
+* Total eligible payouts cannot exceed the invoice total.
 
-* Access their own vendor data.
-* Create and submit invoices.
-* View their own invoices and payouts.
-* Manage their tax information.
-
-Vendor ownership is enforced using the authenticated user's `vendorId`.
-
-## Vendor Registration
-
-Vendor registration creates:
-
-1. Vendor
-2. Vendor user
-
-Both operations occur inside a PostgreSQL transaction.
-
-```text
-Registration
-    ↓
-Create Vendor
-    ↓
-Hash Password
-    ↓
-Create Vendor User
-    ↓
-COMMIT
-```
-
-If either operation fails, the transaction is rolled back.
-
-New vendors start with:
-
-```text
-PENDING
-```
-
-Admin approval changes the vendor to:
-
-```text
-ACTIVE
-```
-
-## Invoice Workflow
-
-```text
-DRAFT
-  ↓
-SUBMITTED
-  ↓
-UNDER_REVIEW
-  ↓
-APPROVED
-  ↓
-PAID
-```
-
-Alternative paths include:
-
-```text
-UNDER_REVIEW → REJECTED
-```
-
-and:
-
-```text
-DRAFT → CANCELLED
-```
-
-Invoice status changes are recorded in `invoice_status_history`.
-
-### Invoice approval validation
-
-Before approval, the system verifies:
-
-* Invoice exists.
-* Invoice is currently `UNDER_REVIEW`.
-* Vendor is active.
-* Invoice contains at least one item.
-* Invoice total matches the sum of its items.
-* Vendor has a currently valid tax profile.
-
-A failed validation does not automatically reject the invoice. The invoice remains available for the appropriate business decision.
-
-## Payout Workflow
-
-```text
-APPROVED
-   ↓
-SCHEDULED
-   ↓
-PROCESSING
-   ↓
-COMPLETED
-```
-
-Alternative states:
-
-```text
-PROCESSING → FAILED
-SCHEDULED → CANCELLED
-```
-
-Payout status changes are stored in `payout_status_history`.
-
-### Payout allocation
-
-The system prevents payouts from exceeding the invoice total.
-
-The invoice row is locked with:
-
-```sql
-SELECT ...
-FROM invoices
-WHERE id = $1
-FOR UPDATE;
-```
-
-This protects the allocation check against concurrent payout creation.
-
-Only these payout states count toward the invoice's allocated amount:
+Eligible payout statuses:
 
 ```text
 SCHEDULED
@@ -267,312 +387,141 @@ PROCESSING
 COMPLETED
 ```
 
-`FAILED` and `CANCELLED` payouts do not consume the invoice's allocation.
+Failed and cancelled payouts do not consume the invoice's available payout balance.
 
-## Tax Profiles
+### Tax Profiles
 
-Vendor tax profiles support historical validity periods.
+Tax profiles contain validity periods.
 
-The system prevents overlapping tax-profile periods for the same vendor.
+Overlapping validity periods for the same vendor are rejected.
 
-Example:
+### Tax Rules
 
-```text
-Tax Profile A
-2026-01-01 → 2026-06-30
+Tax rules contain validity periods.
 
-Tax Profile B
-2026-07-01 → NULL
-```
+Overlapping rules of the same rule type are rejected.
 
-The current profile can be determined from its validity period.
+### Payout Tax Records
 
-## Reporting
+Each payout can have only one tax record.
 
-Current reports include:
-
-### Vendor Payout Summary
-
-Provides:
-
-* Approved invoice amount
-* Completed/paid amount
-* Pending payout amount
-* Remaining payout allocation
-
-### Invoice Status Summary
-
-Provides:
-
-* Invoice count by status
-* Total invoice value by status
-* Percentage of total invoice value represented by each status
-
-The report includes all defined invoice statuses, including statuses with zero records.
-
-## Pagination & Filtering
-
-`GET /invoices` supports:
+This is enforced with:
 
 ```text
-?page=1
-&limit=10
-&status=APPROVED
+UNIQUE(payout_id)
 ```
 
-Supported status values:
+---
 
-```text
-DRAFT
-SUBMITTED
-UNDER_REVIEW
-APPROVED
-REJECTED
-PAID
-CANCELLED
-```
+# Transaction Handling
 
-Pagination response includes:
+Transactions are used whenever multiple database operations must succeed or fail together.
 
-```json
-{
-  "pagination": {
-    "page": 1,
-    "limit": 10,
-    "total": 1,
-    "totalPages": 1
-  }
-}
-```
-
-The implementation uses:
-
-* `LIMIT`
-* `OFFSET`
-* `COUNT(*)`
-* Dynamic SQL conditions
-* Parameterized queries
-* `Promise.all()` for independent read queries
-
-## Validation
-
-Zod is used at the API boundary for request validation.
-
-Examples include:
-
-* Authentication requests
-* Vendor registration
-* Invoice creation
-* Invoice rejection
-* Payout creation
-* Payout failure/cancellation
-* Invoice query parameters
-
-Invalid Zod requests are handled centrally through the global error middleware.
-
-## Error Handling
-
-The project uses a custom `AppError` class for expected application errors.
-
-Example categories include:
-
-```text
-INVOICE_NOT_FOUND
-INVALID_INVOICE_STATUS
-PAYOUT_LIMIT_EXCEEDED
-VENDOR_NOT_ACTIVE
-FORBIDDEN
-VALIDATION_ERROR
-```
-
-Unexpected errors are converted into a generic:
-
-```text
-500 INTERNAL_SERVER_ERROR
-```
-
-without exposing internal implementation details to the client.
-
-## Transactions
-
-Transactions are centralized through a reusable helper:
+A reusable transaction helper is used:
 
 ```text
 BEGIN
-   ↓
+   │
+   ▼
 Execute operations
+   │
+   ├── Success ──► COMMIT
+   │
+   └── Error ────► ROLLBACK
+```
+
+For example, completing a payout involves:
+
+```text
+Lock payout
+   ↓
+Find tax profile
+   ↓
+Find tax rule
+   ↓
+Calculate tax
+   ↓
+Create tax record
+   ↓
+Complete payout
+   ↓
+Create status history
    ↓
 COMMIT
-
-On failure:
-ROLLBACK
 ```
 
-This is used where multiple database operations must succeed or fail together.
+If one operation fails, the transaction is rolled back.
 
-Examples:
+---
 
-* Vendor registration
-* Invoice creation with items
-* Invoice status changes with history
-* Payout creation
-* Payout status changes with history
+# Concurrency Control
 
-## Project Structure
+Payout creation uses PostgreSQL row-level locking.
 
-```text
-src/
-├── app.ts
-│
-├── db/
-│   ├── pool.ts
-│   └── transaction.ts
-│
-├── middlewear/
-│   ├── error.middlewear.ts
-│   ├── auth.middleware.ts
-│   ├── authorize.middleware.ts
-│   ├── vendor-access.middleware.ts
-│   ├── vendor-update.middleware.ts
-│   └── vendor-status.middleware.ts
-│
-├── routes/
-│   ├── auth.routes.ts
-│   ├── vendor.routes.ts
-│   ├── invoice.routes.ts
-│   ├── payout.routes.ts
-│   └── report.routes.ts
-│
-├── controllers/
-│   ├── auth.controller.ts
-│   ├── vendor.controller.ts
-│   ├── invoice.controller.ts
-│   ├── payout.controller.ts
-│   └── report.controller.ts
-│
-├── services/
-│   ├── auth.service.ts
-│   ├── vendor.service.ts
-│   ├── invoice.service.ts
-│   ├── payout.service.ts
-│   └── report.service.ts
-│
-├── validator/
-│   ├── auth.validator.ts
-│   ├── vendor.validator.ts
-│   ├── invoice.validator.ts
-│   └── payout.validator.ts
-│
-└── types/
-    ├── auth.types.ts
-    ├── role-groups.ts
-    ├── express.d.ts
-    └── app-error.ts
-```
-
-## Environment Variables
-
-Create a `.env` file:
-
-```env
-DB_HOST=
-DB_PORT=
-DB_USER=
-DB_PASSWORD=
-DB_NAME=
-JWT_SECRET=
-```
-
-Never commit `.env` to GitHub.
-
-A `.env.example` file is included to show the required variables.
-
-## Installation
-
-Clone the repository and install dependencies:
-
-```bash
-npm install
-```
-
-Run the development server:
-
-```bash
-npm run dev
-```
-
-Build the project:
-
-```bash
-npm run build
-```
-
-Run the compiled application:
-
-```bash
-npm start
-```
-
-## Development Approach
-
-The project is being developed incrementally:
-
-```text
-Database Design
-      ↓
-Authentication
-      ↓
-Authorization
-      ↓
-Invoice Management
-      ↓
-Payout Management
-      ↓
-Tax Management
-      ↓
-Reporting
-      ↓
-Pagination & Filtering
-      ↓
-Performance Optimization
-      ↓
-Final Cleanup & Documentation
-```
-
-Performance optimization will be based on actual query measurements using:
+The approved invoice is locked using:
 
 ```sql
-EXPLAIN (ANALYZE, BUFFERS)
+FOR UPDATE
 ```
 
-Indexes will be added based on real query patterns and measured performance rather than being added blindly.
+This prevents concurrent payout requests from both reading the same remaining balance and creating payouts that collectively exceed the invoice total.
 
-## Current Status
+Conceptually:
 
-Completed:
+```text
+Request A ──► Lock Invoice ──► Check Balance ──► Create Payout ──► Commit
+                                      │
+                                      │
+Request B ──► waits for invoice lock ┘
+```
 
-* Authentication
-* JWT authorization
-* Role-based access control
-* Vendor management
-* Vendor status management
-* Invoice management
-* Invoice status history
-* Invoice approval validation
-* Invoice item bulk insertion
-* Payout management
-* Payout status history
-* Payout allocation/concurrency protection
-* Vendor tax profiles
-* Tax-period overlap protection
-* Financial reports
-* Pagination
-* Invoice status filtering
-* Query validation
-* Centralized Zod error handling
-* Pagination metadata
-* Parallel count/data queries
+This protects the financial integrity of the payout system.
 
-Next phase:
+---
 
-**PostgreSQL query performance analysis and optimization.**
+# Technology Stack
+
+### Backend
+
+* TypeScript
+* Node.js
+* Express.js
+
+### Database
+
+* PostgreSQL
+* `pg`
+
+### Validation
+
+* Zod
+
+### Authentication
+
+* JSON Web Tokens (JWT)
+* bcrypt
+
+### Development Tools
+
+* TypeScript compiler
+* tsx
+* Prettier
+* Postman
+
+---
+
+# Project Structure
+
+```text
+vendor-payout-system/
+│
+├── src/
+│   │
+│   ├── app.ts
+│   │
+│   ├── db/
+│   │   ├── pool.ts
+│   │   └── transaction.ts
+│   │
+│  
+```
